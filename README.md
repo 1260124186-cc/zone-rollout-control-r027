@@ -179,6 +179,32 @@ curl -sS -X PATCH http://127.0.0.1:8090/v1/plans/<plan_id>/assessments \
 | `PATCH` | `/v1/plans/{id}/assessments` | 创建一致性判定 |
 | `GET` | `/v1/plans/{id}/assessments/latest` | 查询最近判定 |
 
+## 计划详情快照
+
+`GET /v1/plans/{id}` 在同一状态快照中返回计划主字段与交接摘要，便于一次看清版本、状态变化和判定历史。主计划字段仍平铺在响应顶层，新增字段不会影响既有客户端：
+
+```json
+{
+  "id": "pln_...",
+  "zone": "edge.example",
+  "state": "active",
+  "version": 3,
+  "latest_revision_id": "rev_...",
+  "timeline": [
+    {"state": "draft", "at": "2026-09-27T10:38:03Z"},
+    {"state": "active", "at": "2026-09-27T10:38:14Z"}
+  ],
+  "revision_summary": {"count": 1, "latest_serial": 2026092501},
+  "assessment_summary": {"count": 0, "latest": null}
+}
+```
+
+- `timeline`：按时间排序的状态节点（`draft` -> `active` -> `completed`），时间相同按生命周期顺序排列。
+- `revision_summary`：版本数量与最新序列号；尚无版本时 `latest_serial` 为 `null`。
+- `assessment_summary`：判定数量与最近一步判定结果（完整 `RolloutAssessment`）；尚无判定时 `latest` 为 `null`。
+- `completed` 计划仍返回完整摘要；`GET /v1/plans` 列表结构保持不变。
+- 计划指针引用的版本或判定在快照中缺失、归属不符或落后于历史时，返回 `storage_failure`，不会静默当作“没有”。
+
 ## 状态及失败行为
 
 - 计划按 `draft -> active -> completed` 单向迁移，激活和完成需要匹配版本。

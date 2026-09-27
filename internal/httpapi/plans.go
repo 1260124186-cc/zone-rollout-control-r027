@@ -50,7 +50,7 @@ func (s *Server) listPlans(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getPlan(w http.ResponseWriter, r *http.Request) {
-	result, err := s.plans.Get(r.Context(), r.PathValue("id"))
+	result, err := s.plans.GetDetail(r.Context(), r.PathValue("id"))
 	if err != nil {
 		sendError(w, r, err)
 		return

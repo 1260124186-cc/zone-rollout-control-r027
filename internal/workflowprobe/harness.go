@@ -14,6 +14,7 @@ import (
 
 	"solo-0014-zone-rollout-control/internal/allocation"
 	"solo-0014-zone-rollout-control/internal/assessment"
+	"solo-0014-zone-rollout-control/internal/domain"
 	"solo-0014-zone-rollout-control/internal/fleet"
 	"solo-0014-zone-rollout-control/internal/httpapi"
 	"solo-0014-zone-rollout-control/internal/plan"
@@ -23,12 +24,13 @@ import (
 )
 
 type harness struct {
-	baseURL  string
-	clock    *platform.ManualClock
-	client   *http.Client
-	server   *http.Server
-	listener net.Listener
-	tempDir  string
+	baseURL   string
+	statePath string
+	clock     *platform.ManualClock
+	client    *http.Client
+	server    *http.Server
+	listener  net.Listener
+	tempDir   string
 }
 
 func newHarness() (*harness, error) {
@@ -36,38 +38,82 @@ func newHarness() (*harness, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create temporary directory: %w", err)
 	}
-	stateStore, err := store.Open(tempDir + "/state.json")
-	if err != nil {
+	clock := platform.NewManualClock(time.Date(2026, time.September, 25, 12, 0, 0, 0, time.UTC))
+	h := &harness{
+		statePath: tempDir + "/state.json",
+		clock:     clock,
+		client:    &http.Client{Timeout: 10 * time.Second},
+		tempDir:   tempDir,
+	}
+	if err := h.start(); err != nil {
 		_ = os.RemoveAll(tempDir)
+		return nil, err
+	}
+	return h, nil
+}
+
+// buildHandler opens (or re-opens) the snapshot with a fresh service graph.
+func (h *harness) buildHandler() (http.Handler, error) {
+	stateStore, err := store.Open(h.statePath)
+	if err != nil {
 		return nil, fmt.Errorf("open temporary store: %w", err)
 	}
-	clock := platform.NewManualClock(time.Date(2026, time.September, 25, 12, 0, 0, 0, time.UTC))
 	ids := platform.CryptoIDGenerator{}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	plans := plan.New(stateStore, clock, ids)
-	nodes := fleet.New(stateStore, clock, ids)
-	allocations := allocation.New(stateStore, clock, ids)
-	probes := probe.New(stateStore, clock, ids, allocations)
-	assessments := assessment.New(stateStore, clock, ids)
-	api := httpapi.New(plans, nodes, allocations, probes, assessments, ids, logger)
+	plans := plan.New(stateStore, h.clock, ids)
+	nodes := fleet.New(stateStore, h.clock, ids)
+	allocations := allocation.New(stateStore, h.clock, ids)
+	probes := probe.New(stateStore, h.clock, ids, allocations)
+	assessments := assessment.New(stateStore, h.clock, ids)
+	return httpapi.New(plans, nodes, allocations, probes, assessments, ids, logger).Handler(), nil
+}
 
+func (h *harness) start() error {
+	handler, err := h.buildHandler()
+	if err != nil {
+		return err
+	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		_ = os.RemoveAll(tempDir)
-		return nil, fmt.Errorf("listen: %w", err)
+		return fmt.Errorf("listen: %w", err)
 	}
-	server := &http.Server{Handler: api.Handler(), ReadHeaderTimeout: 5 * time.Second}
+	server := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second}
 	go func() {
 		_ = server.Serve(listener)
 	}()
-	return &harness{
-		baseURL:  "http://" + listener.Addr().String(),
-		clock:    clock,
-		client:   &http.Client{Timeout: 10 * time.Second},
-		server:   server,
-		listener: listener,
-		tempDir:  tempDir,
-	}, nil
+	h.baseURL = "http://" + listener.Addr().String()
+	h.server = server
+	h.listener = listener
+	return nil
+}
+
+// restartWithState shuts the server down, mutates the persisted snapshot, and
+// serves it again so corrupted references can be observed through real reads.
+func (h *harness) restartWithState(mutate func(*domain.State)) error {
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := h.server.Shutdown(shutdownCtx); err != nil {
+		return fmt.Errorf("shutdown server: %w", err)
+	}
+	_ = h.listener.Close()
+
+	payload, err := os.ReadFile(h.statePath)
+	if err != nil {
+		return fmt.Errorf("read snapshot: %w", err)
+	}
+	var state domain.State
+	if err := json.Unmarshal(payload, &state); err != nil {
+		return fmt.Errorf("decode snapshot: %w", err)
+	}
+	mutate(&state)
+	encoded, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode snapshot: %w", err)
+	}
+	if err := os.WriteFile(h.statePath, append(encoded, '\n'), 0o600); err != nil {
+		return fmt.Errorf("write snapshot: %w", err)
+	}
+	return h.start()
 }
 
 func (h *harness) close() {

@@ -167,17 +167,134 @@ func (s *Service) Complete(
 	return plan, err
 }
 
-func (s *Service) Get(ctx context.Context, planID string) (domain.RolloutPlan, error) {
-	var plan domain.RolloutPlan
+func (s *Service) GetDetail(ctx context.Context, planID string) (domain.PlanDetail, error) {
+	var detail domain.PlanDetail
 	err := s.store.Read(ctx, func(state *domain.State) error {
-		found, ok := state.Plans[planID]
+		plan, ok := state.Plans[planID]
 		if !ok {
 			return domain.NotFound("plan", planID)
 		}
-		plan = found
+
+		// Collect the plan's revisions from this single snapshot.
+		revisions := make([]domain.ZoneRevision, 0)
+		for _, revision := range state.Revisions {
+			if revision.PlanID == planID {
+				revisions = append(revisions, revision)
+			}
+		}
+		sort.Slice(revisions, func(i, j int) bool {
+			if revisions[i].Serial != revisions[j].Serial {
+				return revisions[i].Serial < revisions[j].Serial
+			}
+			return revisions[i].ID < revisions[j].ID
+		})
+		revisionSummary := domain.PlanRevisionSummary{
+			Count:        len(revisions),
+			LatestSerial: nil,
+		}
+		if len(revisions) > 0 {
+			serial := revisions[len(revisions)-1].Serial
+			revisionSummary.LatestSerial = &serial
+			latest := revisions[len(revisions)-1]
+			// A dangling latest_revision_id must surface as a failure rather
+			// than silently looking like the revision never existed.
+			switch referenced, present := state.Revisions[plan.LatestRevisionID]; {
+			case plan.LatestRevisionID == "":
+				return domain.NewError(domain.CodeStorageFailure, "plan summary is inconsistent with its revisions", map[string]any{
+					"plan_id":        planID,
+					"revision_count": len(revisions),
+				})
+			case !present:
+				return domain.NewError(domain.CodeStorageFailure, "plan references a missing revision", map[string]any{
+					"revision_id": plan.LatestRevisionID,
+				})
+			case referenced.PlanID != planID:
+				return domain.NewError(domain.CodeStorageFailure, "plan latest revision belongs to another plan", map[string]any{
+					"plan_id":     planID,
+					"revision_id": plan.LatestRevisionID,
+				})
+			case referenced.ID != latest.ID:
+				return domain.NewError(domain.CodeStorageFailure, "plan latest revision does not match revision history", map[string]any{
+					"plan_id":                    planID,
+					"latest_revision_id":         plan.LatestRevisionID,
+					"history_latest_revision_id": latest.ID,
+				})
+			}
+		} else if plan.LatestRevisionID != "" {
+			return domain.NewError(domain.CodeStorageFailure, "plan references a missing revision", map[string]any{
+				"revision_id": plan.LatestRevisionID,
+			})
+		}
+
+		// Collect the plan's assessments from the same snapshot. The count
+		// comes from the collection; the latest step is the assessment the
+		// plan pointer references, which write paths keep as the last result.
+		assessments := make([]domain.RolloutAssessment, 0)
+		for _, assessment := range state.Assessments {
+			if assessment.PlanID == planID {
+				assessments = append(assessments, assessment)
+			}
+		}
+		assessmentSummary := domain.PlanAssessmentSummary{Count: len(assessments)}
+		if len(assessments) > 0 {
+			if plan.LatestAssessmentID == "" {
+				return domain.NewError(domain.CodeStorageFailure, "plan summary is inconsistent with its assessments", map[string]any{
+					"plan_id":          planID,
+					"assessment_count": len(assessments),
+				})
+			}
+			referenced, present := state.Assessments[plan.LatestAssessmentID]
+			switch {
+			case !present:
+				return domain.NewError(domain.CodeStorageFailure, "plan references a missing assessment", map[string]any{
+					"assessment_id": plan.LatestAssessmentID,
+				})
+			case referenced.PlanID != planID:
+				return domain.NewError(domain.CodeStorageFailure, "plan latest assessment belongs to another plan", map[string]any{
+					"plan_id":       planID,
+					"assessment_id": plan.LatestAssessmentID,
+				})
+			}
+			// No stored assessment may be newer than the referenced one.
+			for _, assessment := range assessments {
+				if assessment.CreatedAt.After(referenced.CreatedAt) {
+					return domain.NewError(domain.CodeStorageFailure, "plan latest assessment is stale against assessment history", map[string]any{
+						"plan_id":              planID,
+						"latest_assessment_id": referenced.ID,
+						"newer_assessment_id":  assessment.ID,
+					})
+				}
+			}
+			if referenced.RevisionID != "" {
+				if revision, ok := state.Revisions[referenced.RevisionID]; !ok {
+					return domain.NewError(domain.CodeStorageFailure, "assessment references a missing revision", map[string]any{
+						"assessment_id": referenced.ID,
+						"revision_id":   referenced.RevisionID,
+					})
+				} else if revision.PlanID != planID {
+					return domain.NewError(domain.CodeStorageFailure, "assessment revision belongs to another plan", map[string]any{
+						"assessment_id": referenced.ID,
+						"revision_id":   referenced.RevisionID,
+					})
+				}
+			}
+			latest := referenced
+			assessmentSummary.Latest = &latest
+		} else if plan.LatestAssessmentID != "" {
+			return domain.NewError(domain.CodeStorageFailure, "plan references a missing assessment", map[string]any{
+				"assessment_id": plan.LatestAssessmentID,
+			})
+		}
+
+		detail = domain.PlanDetail{
+			RolloutPlan:       plan,
+			Timeline:          domain.PlanTimeline(plan),
+			RevisionSummary:   revisionSummary,
+			AssessmentSummary: assessmentSummary,
+		}
 		return nil
 	})
-	return plan, err
+	return detail, err
 }
 
 func (s *Service) LatestRevision(

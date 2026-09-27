@@ -40,6 +40,38 @@ func CompletePlan(plan *RolloutPlan, now time.Time) error {
 	return nil
 }
 
+// PlanTimeline lists the states the plan has entered, ordered by the moment
+// each state was reached. A plan always contains at least the draft node.
+func PlanTimeline(plan RolloutPlan) []PlanStateNode {
+	timeline := []PlanStateNode{{State: PlanDraft, At: plan.CreatedAt}}
+	if plan.ActivatedAt != nil {
+		timeline = append(timeline, PlanStateNode{State: PlanActive, At: *plan.ActivatedAt})
+	}
+	if plan.CompletedAt != nil {
+		timeline = append(timeline, PlanStateNode{State: PlanCompleted, At: *plan.CompletedAt})
+	}
+	sort.SliceStable(timeline, func(i, j int) bool {
+		if !timeline[i].At.Equal(timeline[j].At) {
+			return timeline[i].At.Before(timeline[j].At)
+		}
+		return planStateRank(timeline[i].State) < planStateRank(timeline[j].State)
+	})
+	return timeline
+}
+
+func planStateRank(state PlanState) int {
+	switch state {
+	case PlanDraft:
+		return 0
+	case PlanActive:
+		return 1
+	case PlanCompleted:
+		return 2
+	default:
+		return 3
+	}
+}
+
 func LeaseFingerprint(planID string, input LeaseInput) string {
 	payload := fmt.Sprintf(
 		"%s|%s|%s|%d|%d",

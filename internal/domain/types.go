@@ -73,6 +73,35 @@ type RolloutPlan struct {
 	CompletedAt         *time.Time `json:"completed_at,omitempty"`
 }
 
+// PlanStateNode records when the plan entered one of its lifecycle states.
+type PlanStateNode struct {
+	State PlanState `json:"state"`
+	At    time.Time `json:"at"`
+}
+
+// PlanRevisionSummary aggregates the immutable zone revisions of a plan.
+type PlanRevisionSummary struct {
+	Count        int     `json:"count"`
+	LatestSerial *uint32 `json:"latest_serial"`
+}
+
+// PlanAssessmentSummary aggregates the consistency assessments of a plan.
+// Latest is null until the first assessment exists.
+type PlanAssessmentSummary struct {
+	Count  int                `json:"count"`
+	Latest *RolloutAssessment `json:"latest"`
+}
+
+// PlanDetail is a single-snapshot plan read. It embeds RolloutPlan so every
+// main plan field stays at the top level, and adds handoff-oriented summaries
+// that are all computed from the same state snapshot.
+type PlanDetail struct {
+	RolloutPlan
+	Timeline          []PlanStateNode       `json:"timeline"`
+	RevisionSummary   PlanRevisionSummary   `json:"revision_summary"`
+	AssessmentSummary PlanAssessmentSummary `json:"assessment_summary"`
+}
+
 type ResolverNode struct {
 	ID        string    `json:"id"`
 	NodeName  string    `json:"node_name"`
