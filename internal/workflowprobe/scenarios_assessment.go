@@ -60,6 +60,19 @@ func runConsistencyAssessment() error {
 	if latest.ID != consistent.ID {
 		return ensure(false, "latest assessment does not match")
 	}
+	var assessedView domain.PlanView
+	if err := harness.call(http.MethodGet, "/v1/plans/"+plan.ID, nil, &assessedView); err != nil {
+		return err
+	}
+	if assessedView.Summary.AssessmentCount != 1 ||
+		assessedView.Summary.LatestAssessmentID != consistent.ID ||
+		assessedView.Summary.LatestVerdict != domain.VerdictConsistent {
+		return ensure(false, "plan summary does not reflect the consistent assessment")
+	}
+	if assessedView.Summary.RevisionCount != 1 ||
+		assessedView.Summary.LatestSerial != revision.Serial {
+		return ensure(false, "plan summary lost the revision overview after assessment")
+	}
 
 	reviewPlan, reviewRevision, err := createActivePlan(harness, "review.example", 4001, 1, 1, 20)
 	if err != nil {
@@ -87,6 +100,15 @@ func runConsistencyAssessment() error {
 	}
 	if review.Verdict != domain.VerdictReviewRequired {
 		return ensure(false, "mismatched serial did not require review")
+	}
+	var reviewView domain.PlanView
+	if err := harness.call(http.MethodGet, "/v1/plans/"+reviewPlan.ID, nil, &reviewView); err != nil {
+		return err
+	}
+	if reviewView.Summary.AssessmentCount != 1 ||
+		reviewView.Summary.LatestAssessmentID != review.ID ||
+		reviewView.Summary.LatestVerdict != domain.VerdictReviewRequired {
+		return ensure(false, "plan summary does not reflect the review assessment")
 	}
 	return nil
 }

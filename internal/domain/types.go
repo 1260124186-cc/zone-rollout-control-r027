@@ -73,6 +73,26 @@ type RolloutPlan struct {
 	CompletedAt         *time.Time `json:"completed_at,omitempty"`
 }
 
+type PlanStateNode struct {
+	State     PlanState `json:"state"`
+	EnteredAt time.Time `json:"entered_at"`
+}
+
+type PlanSummary struct {
+	StateTimeline      []PlanStateNode `json:"state_timeline"`
+	RevisionCount      int             `json:"revision_count"`
+	LatestRevisionID   string          `json:"latest_revision_id,omitempty"`
+	LatestSerial       uint32          `json:"latest_serial,omitempty"`
+	AssessmentCount    int             `json:"assessment_count"`
+	LatestAssessmentID string          `json:"latest_assessment_id,omitempty"`
+	LatestVerdict      Verdict         `json:"latest_verdict,omitempty"`
+}
+
+type PlanView struct {
+	RolloutPlan
+	Summary PlanSummary `json:"summary"`
+}
+
 type ResolverNode struct {
 	ID        string    `json:"id"`
 	NodeName  string    `json:"node_name"`

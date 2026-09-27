@@ -169,7 +169,7 @@ curl -sS -X PATCH http://127.0.0.1:8090/v1/plans/<plan_id>/assessments \
 | `GET` | `/v1/nodes` | 按状态和区域分页查询节点 |
 | `PUT` | `/v1/plans` | 创建计划草稿 |
 | `GET` | `/v1/plans` | 按状态分页查询计划 |
-| `GET` | `/v1/plans/{id}` | 查询计划 |
+| `GET` | `/v1/plans/{id}` | 查询计划及状态时间线、版本和判定摘要 |
 | `PATCH` | `/v1/plans/{id}/revisions` | 添加区域版本 |
 | `PATCH` | `/v1/plans/{id}/activate` | 激活计划 |
 | `PATCH` | `/v1/plans/{id}/complete` | 完成计划 |
@@ -188,6 +188,7 @@ curl -sS -X PATCH http://127.0.0.1:8090/v1/plans/<plan_id>/assessments \
 - 一个节点同一时刻最多有一个 `claimed` 租约。
 - 相同请求键和相同内容可安全重放；同键异载荷返回 `idempotency_conflict`。
 - 一致性判定综合节点覆盖率、序列号、成功比例和最大延迟，返回 `consistent` 或 `review_required`。
+- 查询单个计划时，`summary` 与主字段来自同一快照；引用的版本或判定缺失时返回 `storage_failure`。
 - 所有校验和冲突在快照替换前返回，不留下部分状态。
 
 ## 后续工程任务的行为边界

@@ -130,6 +130,62 @@ func BuildAssessment(
 	}
 }
 
+func BuildPlanSummary(plan RolloutPlan, state *State) (PlanSummary, error) {
+	timeline := make([]PlanStateNode, 0, 3)
+	timeline = append(timeline, PlanStateNode{State: PlanDraft, EnteredAt: plan.CreatedAt.UTC()})
+	if plan.ActivatedAt != nil {
+		timeline = append(timeline, PlanStateNode{State: PlanActive, EnteredAt: plan.ActivatedAt.UTC()})
+	}
+	if plan.CompletedAt != nil {
+		timeline = append(timeline, PlanStateNode{State: PlanCompleted, EnteredAt: plan.CompletedAt.UTC()})
+	}
+	sort.SliceStable(timeline, func(i, j int) bool {
+		return timeline[i].EnteredAt.Before(timeline[j].EnteredAt)
+	})
+	summary := PlanSummary{StateTimeline: timeline}
+	for _, revision := range state.Revisions {
+		if revision.PlanID == plan.ID {
+			summary.RevisionCount++
+		}
+	}
+	if plan.LatestRevisionID != "" {
+		revision, ok := state.Revisions[plan.LatestRevisionID]
+		if !ok {
+			return PlanSummary{}, NewError(CodeStorageFailure, "plan references a missing revision", map[string]any{
+				"plan_id":     plan.ID,
+				"revision_id": plan.LatestRevisionID,
+			})
+		}
+		summary.LatestRevisionID = revision.ID
+		summary.LatestSerial = revision.Serial
+	} else if summary.RevisionCount > 0 {
+		return PlanSummary{}, NewError(CodeStorageFailure, "plan has revisions but no latest revision reference", map[string]any{
+			"plan_id": plan.ID,
+		})
+	}
+	for _, assessment := range state.Assessments {
+		if assessment.PlanID == plan.ID {
+			summary.AssessmentCount++
+		}
+	}
+	if plan.LatestAssessmentID != "" {
+		assessment, ok := state.Assessments[plan.LatestAssessmentID]
+		if !ok {
+			return PlanSummary{}, NewError(CodeStorageFailure, "plan references a missing assessment", map[string]any{
+				"plan_id":       plan.ID,
+				"assessment_id": plan.LatestAssessmentID,
+			})
+		}
+		summary.LatestAssessmentID = assessment.ID
+		summary.LatestVerdict = assessment.Verdict
+	} else if summary.AssessmentCount > 0 {
+		return PlanSummary{}, NewError(CodeStorageFailure, "plan has assessments but no latest assessment reference", map[string]any{
+			"plan_id": plan.ID,
+		})
+	}
+	return summary, nil
+}
+
 func round(value float64, places int) float64 {
 	scale := math.Pow10(places)
 	return math.Round(value*scale) / scale

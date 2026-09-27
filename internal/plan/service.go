@@ -167,17 +167,21 @@ func (s *Service) Complete(
 	return plan, err
 }
 
-func (s *Service) Get(ctx context.Context, planID string) (domain.RolloutPlan, error) {
-	var plan domain.RolloutPlan
+func (s *Service) Get(ctx context.Context, planID string) (domain.PlanView, error) {
+	var view domain.PlanView
 	err := s.store.Read(ctx, func(state *domain.State) error {
-		found, ok := state.Plans[planID]
+		plan, ok := state.Plans[planID]
 		if !ok {
 			return domain.NotFound("plan", planID)
 		}
-		plan = found
+		summary, err := domain.BuildPlanSummary(plan, state)
+		if err != nil {
+			return err
+		}
+		view = domain.PlanView{RolloutPlan: plan, Summary: summary}
 		return nil
 	})
-	return plan, err
+	return view, err
 }
 
 func (s *Service) LatestRevision(

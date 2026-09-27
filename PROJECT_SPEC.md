@@ -29,6 +29,16 @@ Zone Rollout Control 是面向 DNS 运维人员的 Go HTTP 控制面。它把区
 - `latest_assessment_id`：最近一次完成的一致性判定。
 - `created_at`、`activated_at`、`completed_at`：RFC3339 时间。
 
+### 计划读取摘要（PlanView）
+
+`GET /v1/plans/{id}` 在计划主字段之外返回 `summary`，与主字段来自同一快照：
+
+- `state_timeline`：按进入时间排序的状态节点，每项含 `state` 和 `entered_at`。
+- `revision_count`、`latest_revision_id`、`latest_serial`：版本数量与最新序列。
+- `assessment_count`、`latest_assessment_id`、`latest_verdict`：判定数量与最近一步结论。
+
+`latest_revision_id` 或 `latest_assessment_id` 指向缺失记录时返回 `storage_failure`，不静默省略。
+
 ### ZoneRevision
 
 计划中不可变的区域内容版本。
